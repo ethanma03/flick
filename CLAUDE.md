@@ -13,6 +13,7 @@ Personal video player for Windows (Rust, eframe/egui on glow + libmpv). It's a s
   - `commands.rs`: the command language shared by `flick ctl`, the Ctrl+P palette and keybindings. Add new commands here and to `COMMANDS`. `state_json` is what `flick state` prints.
   - `controls.rs`: the auto-hiding control bar, seek bar, empty/error screens and the region overlay.
   - `scrub.rs`: seek-bar scrubbing. It keeps one seek in flight (the next goes out on mpv's playback-restart) and picks keyframe or exact seeks from a per-file keyframe index (`ops::keyframes`, read in the background) and a learned decode cost, so the picture never steps away from the pointer. The `live` test drives it against headless mpv. `FLICK_SCRUB_LOG=path` logs each seek and its latency.
+  - `preview.rs`: seek-bar hover/drag previews. On the first hover, a below-normal-priority ffmpeg (`ops::thumbnails`, which decodes keyframes only) streams up to about 300 small frames, and the one nearest the pointer is drawn above the time label.
   - `drive.rs`: test-only scripted seek-bar input (`flick ctl drive ms:x:down:shift,...`, only when the player runs with `FLICK_DEV` set). It injects through egui's own input and never touches the real mouse.
   - `hud.rs`: toasts, the details panel, palette, help, context menu and modals.
 - `src/ops.rs`: headless `info` (ffprobe summary), `frame` and `contact` (tiled frames).

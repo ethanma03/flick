@@ -5,6 +5,7 @@ mod controls;
 mod drive;
 mod hud;
 mod player;
+mod preview;
 mod scrub;
 mod tray;
 mod video;
@@ -96,6 +97,8 @@ pub struct FlickApp {
     drag_from: Option<Pos2>,
     scrub: Option<scrub::Scrub>,
     seek_model: scrub::SeekModel,
+    /// Seek-bar previews for the current file, started on first hover.
+    previews: Option<preview::Previews>,
     /// The seek bar's rect last frame, for `drive`.
     seek_rect: Rect,
     /// A scripted drag in progress (FLICK_DEV only).
@@ -308,6 +311,7 @@ impl FlickApp {
             drag_from: None,
             scrub: None,
             seek_model: Default::default(),
+            previews: None,
             seek_rect: Rect::NOTHING,
             drive: None,
             video_rect: Rect::NOTHING,
@@ -357,6 +361,7 @@ impl FlickApp {
     /// background ffprobe (local files only; scrubbing manages without it meanwhile).
     fn load_keyframes(&mut self) {
         self.seek_model = Default::default();
+        self.previews = None;
         let Some(path) = self.current_path() else { return };
         let cell = self.seek_model.keyframes.clone();
         std::thread::spawn(move || {

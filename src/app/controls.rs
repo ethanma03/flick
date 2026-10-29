@@ -5,6 +5,7 @@ use egui::{Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Rect, RichT
 
 use super::commands::{split_args, trim_float};
 use super::hud::card;
+use super::preview::Previews;
 use super::scrub::Scrub;
 use super::{ACCENT, FlickApp, TEXT, TEXT_DIM};
 use crate::media::clock;
@@ -181,7 +182,36 @@ impl FlickApp {
             let tip = Rect::from_center_size(pos2(x, r.top() - size.y / 2.0 - 4.0), size);
             p.rect_filled(tip, 6.0, Color32::from_rgba_unmultiplied(22, 22, 26, 236));
             p.galley(tip.center() - galley.size() / 2.0, galley, TEXT);
+            // The preview frame above the time, once the background ffmpeg has one. Drawn
+            // at 1:1 pixels; it reaches above the control bar, so it isn't clipped to it.
+            if let Some((tex, [w, h])) = self.preview_at(ui.ctx(), t) {
+                let ppp = ui.ctx().pixels_per_point();
+                let sz = vec2(w as f32 / ppp, h as f32 / ppp);
+                let px = hx.clamp(r.left() + sz.x / 2.0, r.right() - sz.x / 2.0);
+                let frame = Rect::from_center_size(pos2(px, tip.top() - 6.0 - sz.y / 2.0), sz);
+                let p = ui.painter().with_clip_rect(ui.ctx().content_rect());
+                p.rect_filled(frame.expand(1.0), 3.0, Color32::from_rgba_unmultiplied(22, 22, 26, 236));
+                p.image(tex.id(), frame, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                p.rect_stroke(frame.expand(1.0), 3.0, Stroke::new(1.0, Color32::from_white_alpha(36)), egui::StrokeKind::Outside);
+            }
         }
+    }
+
+    /// The seek-bar preview nearest `t`, starting the previews for this file on first use
+    /// (local files with video only).
+    fn preview_at(&mut self, ctx: &egui::Context, t: f64) -> Option<(egui::TextureHandle, [usize; 2])> {
+        if self.previews.is_none() {
+            let pb = &self.player.pb;
+            let ([dw, dh], dur) = (pb.dsize()?, pb.duration?);
+            if !pb.has_video() {
+                return None;
+            }
+            let path = self.current_path()?;
+            self.previews = Some(Previews::start(&path, dur, dw as f32 / dh as f32, ctx.clone()));
+        }
+        let pv = self.previews.as_mut()?;
+        let size = pv.size();
+        pv.at(ctx, t).map(|tex| (tex, size))
     }
 
     /// Drive a seek-bar drag (the seek choices are in `scrub.rs`). Playback pauses for

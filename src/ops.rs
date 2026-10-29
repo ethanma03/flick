@@ -162,6 +162,61 @@ fn parse_keyframes(csv: &str) -> Vec<f64> {
     keys
 }
 
+/// Small frames across a video for the seek-bar preview, streamed to `each(time, rgba)`
+/// as ffmpeg decodes them (stop early by returning false). Only keyframes are decoded,
+/// which is cheap, and kept at least `every` seconds apart. Each frame is `w`x`h` RGBA,
+/// letterboxed. Runs at below-normal priority so playback never waits on it.
+pub fn thumbnails(path: &Path, every: f64, w: u32, h: u32, mut each: impl FnMut(f64, Vec<u8>) -> bool) -> Result<(), String> {
+    use std::io::{BufRead, BufReader, Read};
+    use std::process::Stdio;
+    let mut c = tool("ffmpeg");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        c.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
+    }
+    // showinfo reports each kept frame's time on stderr, in the same order as stdout.
+    let vf = format!(
+        "select='isnan(prev_selected_t)+gte(t-prev_selected_t,{every})',showinfo,\
+         scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+    );
+    c.args(["-hide_banner", "-nostats", "-loglevel", "info", "-skip_frame", "nokey", "-threads", "2"]).arg("-i").arg(path);
+    c.args(["-an", "-sn", "-vf", &vf, "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgba", "-"]);
+    c.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = c.spawn().map_err(|e| format!("ffmpeg: {e}"))?;
+    let stderr = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if !line.contains("Parsed_showinfo") {
+                continue;
+            }
+            let t = line.split("pts_time:").nth(1).and_then(|s| s.split_whitespace().next()).and_then(|s| s.parse::<f64>().ok());
+            if let Some(t) = t
+                && tx.send(t).is_err()
+            {
+                break;
+            }
+        }
+    });
+    let mut out = child.stdout.take().unwrap();
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    let result = loop {
+        if out.read_exact(&mut buf).is_err() {
+            break Ok(());
+        }
+        let Ok(t) = rx.recv() else { break Ok(()) };
+        if !each(t, buf.clone()) {
+            break Ok(());
+        }
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    result
+}
+
 /// One frame at `at` seconds as an image file (format from the extension). `width` scales, keeping aspect.
 pub fn frame(path: &Path, at: f64, out: &Path, width: Option<u32>) -> Result<(), String> {
     if let Some(dir) = out.parent() {

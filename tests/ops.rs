@@ -53,5 +53,33 @@ fn info_frame_contact() {
     // 3 tiles of 100x56 with 4 px gaps around and between them.
     assert_eq!((img.width(), img.height()), (3 * 100 + 4 * 4, 2 * 56 + 3 * 4));
 
+    // Seek-bar previews: one per keyframe (every 25 frames = 1 s here), in order.
+    let gop = clip.with_file_name("gop1s.mp4");
+    let st = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-i"])
+        .arg(&clip)
+        .args(["-c:v", "libx264", "-g", "25", "-keyint_min", "25", "-sc_threshold", "0", "-pix_fmt", "yuv420p", "-an"])
+        .arg(&gop)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let mut thumbs = Vec::new();
+    flick::ops::thumbnails(&gop, 0.9, 64, 36, |t, rgba| {
+        thumbs.push((t, rgba.len()));
+        true
+    })
+    .unwrap();
+    let times: Vec<f64> = thumbs.iter().map(|t| (t.0 * 10.0).round() / 10.0).collect();
+    assert_eq!(times, vec![0.0, 1.0, 2.0, 3.0]);
+    assert!(thumbs.iter().all(|t| t.1 == 64 * 36 * 4));
+    // Asking for fewer: every 2 s keeps 0 and 2; stopping early stops ffmpeg.
+    let mut n = 0;
+    flick::ops::thumbnails(&gop, 2.0, 64, 36, |_, _| {
+        n += 1;
+        n < 1
+    })
+    .unwrap();
+    assert_eq!(n, 1);
+
     let _ = std::fs::remove_dir_all(clip.parent().unwrap());
 }
