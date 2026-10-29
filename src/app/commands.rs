@@ -169,6 +169,12 @@ impl FlickApp {
         let ok = || Ok(json!(true));
         match cmd.as_str() {
             "ping" => Ok(json!({ "pid": std::process::id() })),
+            // Test-only, left out of COMMANDS: see drive.rs.
+            "drive" if std::env::var_os("FLICK_DEV").is_some() => {
+                self.drive = Some(super::drive::Drive::parse(a0.ok_or("drive <ms:x:down:shift,...>")?)?);
+                ctx.request_repaint();
+                ok()
+            }
             "help" if cwd.is_none() => {
                 self.help = true;
                 ok()

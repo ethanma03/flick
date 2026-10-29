@@ -135,6 +135,33 @@ pub fn duration(path: &Path) -> Result<f64, String> {
     String::from_utf8_lossy(&out).trim().parse().map_err(|_| "couldn't read the duration".to_string())
 }
 
+/// Keyframe times of the first video stream, sorted, on mpv's timeline (relative to the
+/// container start time). Reads packet headers only, no decoding.
+pub fn keyframes(path: &Path) -> Result<Vec<f64>, String> {
+    let mut c = tool("ffprobe");
+    c.args(["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags:format=start_time", "-of", "csv=p=1"])
+        .arg(path);
+    let out = run(c, "ffprobe")?;
+    Ok(parse_keyframes(&String::from_utf8_lossy(&out)))
+}
+
+fn parse_keyframes(csv: &str) -> Vec<f64> {
+    let mut start = 0.0;
+    let mut keys = Vec::new();
+    for line in csv.lines() {
+        let mut f = line.trim().split(',');
+        match (f.next(), f.next(), f.next()) {
+            (Some("packet"), Some(pts), Some(flags)) if flags.starts_with('K') => keys.extend(pts.parse::<f64>().ok()),
+            (Some("format"), Some(s), _) => start = s.parse().unwrap_or(0.0),
+            _ => {}
+        }
+    }
+    let mut keys: Vec<f64> = keys.into_iter().map(|k| k - start).collect();
+    keys.sort_by(f64::total_cmp);
+    keys.dedup();
+    keys
+}
+
 /// One frame at `at` seconds as an image file (format from the extension). `width` scales, keeping aspect.
 pub fn frame(path: &Path, at: f64, out: &Path, width: Option<u32>) -> Result<(), String> {
     if let Some(dir) = out.parent() {
@@ -201,5 +228,11 @@ mod tests {
         assert_eq!(rate(&json!("30000/1001")), Some(29.97));
         assert_eq!(rate(&json!("25/1")), Some(25.0));
         assert_eq!(rate(&json!("0/0")), None);
+    }
+
+    #[test]
+    fn keyframe_csv() {
+        let csv = "packet,1.5,K__\npacket,2.0,__\npacket,N/A,K__\npacket,11.5,K_\npacket,1.5,K__\nformat,1.500000\n";
+        assert_eq!(parse_keyframes(csv), vec![0.0, 10.0]);
     }
 }

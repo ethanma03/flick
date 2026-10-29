@@ -2,8 +2,10 @@
 
 mod commands;
 mod controls;
+mod drive;
 mod hud;
 mod player;
+mod scrub;
 mod tray;
 mod video;
 
@@ -92,7 +94,12 @@ pub struct FlickApp {
     region: Option<Region>,
     selecting: bool,
     drag_from: Option<Pos2>,
-    scrub: Option<controls::Scrub>,
+    scrub: Option<scrub::Scrub>,
+    seek_model: scrub::SeekModel,
+    /// The seek bar's rect last frame, for `drive`.
+    seek_rect: Rect,
+    /// A scripted drag in progress (FLICK_DEV only).
+    drive: Option<drive::Drive>,
     video_rect: Rect,
     /// Current mpv sub-pos (100 = bottom); raised while the controls show.
     sub_pos: i64,
@@ -300,6 +307,9 @@ impl FlickApp {
             selecting: false,
             drag_from: None,
             scrub: None,
+            seek_model: Default::default(),
+            seek_rect: Rect::NOTHING,
+            drive: None,
             video_rect: Rect::NOTHING,
             sub_pos: 100,
             palette: Palette::default(),
@@ -341,6 +351,19 @@ impl FlickApp {
 
     pub fn current_path(&self) -> Option<PathBuf> {
         self.current.as_deref().filter(|c| !crate::media::is_url(c)).map(PathBuf::from)
+    }
+
+    /// Fresh seek knowledge for a newly loaded file, and its keyframe index from a
+    /// background ffprobe (local files only; scrubbing manages without it meanwhile).
+    fn load_keyframes(&mut self) {
+        self.seek_model = Default::default();
+        let Some(path) = self.current_path() else { return };
+        let cell = self.seek_model.keyframes.clone();
+        std::thread::spawn(move || {
+            if let Ok(k) = crate::ops::keyframes(&path) {
+                let _ = cell.set(k);
+            }
+        });
     }
 
     // ---------------------------------------------------------------- files
@@ -544,6 +567,7 @@ impl FlickApp {
         if ch.file_loaded {
             self.loading = false;
             self.scrub = None;
+            self.load_keyframes();
             self.error = None;
         }
         if let Some(e) = ch.command_errors.into_iter().last() {
@@ -952,6 +976,16 @@ impl FlickApp {
 }
 
 impl eframe::App for FlickApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(d) = &mut self.drive {
+            if d.inject(raw, self.seek_rect) {
+                ctx.request_repaint();
+            } else {
+                self.drive = None;
+            }
+        }
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.startup.is_empty() {
             for argv in std::mem::take(&mut self.startup) {

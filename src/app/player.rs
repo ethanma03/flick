@@ -167,6 +167,8 @@ pub struct Player {
     pub pb: Playback,
     info: HashMap<&'static str, String>,
     tracks: Vec<Value>,
+    /// Count of playback restarts (mpv sends one when a seek has its first frame up).
+    pub restarts: u64,
 }
 
 impl Player {
@@ -182,6 +184,7 @@ impl Player {
             pb: Playback { speed: 1.0, volume: 100.0, pause: true, ..Default::default() },
             info: HashMap::new(),
             tracks: Vec::new(),
+            restarts: 0,
         }
     }
 
@@ -221,6 +224,7 @@ impl Player {
                         ch.error = error;
                     }
                 }
+                Event::PlaybackRestart => self.restarts += 1,
                 Event::CommandReply { id: USER_CMD, error: Some(e) } => ch.command_errors.push(e),
                 _ => {}
             }

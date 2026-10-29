@@ -5,6 +5,7 @@ use egui::{Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Rect, RichT
 
 use super::commands::{split_args, trim_float};
 use super::hud::card;
+use super::scrub::Scrub;
 use super::{ACCENT, FlickApp, TEXT, TEXT_DIM};
 use crate::media::clock;
 
@@ -42,22 +43,6 @@ pub fn icon_button(ui: &mut egui::Ui, glyph: &str, tip: &str, active: bool, size
     let color = if active { ACCENT } else { TEXT };
     ui.painter().text(r.center(), Align2::CENTER_CENTER, glyph, icons(size), color);
     resp.on_hover_text(tip)
-}
-
-/// A seek-bar drag in progress, or just released and waiting for mpv to land.
-pub struct Scrub {
-    /// The time being scrubbed to (NaN until the first pointer frame).
-    pub t: f64,
-    /// Playback was running when the drag began: resume it on release.
-    resume: bool,
-    /// The last seek target sent, and when.
-    sent: Option<(f64, f64)>,
-    /// When `t` last changed.
-    moved: f64,
-    /// An exact seek to `t` has gone out.
-    exact: bool,
-    /// When the button came up.
-    released: Option<f64>,
 }
 
 impl FlickApp {
@@ -106,6 +91,7 @@ impl FlickApp {
                 ui.multiply_opacity(alpha);
                 scrim(ui.painter(), bar);
                 let seek = Rect::from_min_max(pos2(bar.left() + 18.0, bar.bottom() - 74.0), pos2(bar.right() - 18.0, bar.bottom() - 54.0));
+                self.seek_rect = seek;
                 self.seek_bar(ui, seek);
                 let row = Rect::from_min_max(pos2(bar.left() + 10.0, bar.bottom() - 46.0), pos2(bar.right() - 10.0, bar.bottom() - 8.0));
                 self.button_row(ui, row);
@@ -152,15 +138,16 @@ impl FlickApp {
             self.scrub = None;
             return;
         };
+        self.scrub_input(ui, &resp, r, dur);
         let x_of = |t: f64| r.left() + (t / dur).clamp(0.0, 1.0) as f32 * r.width();
         let t_of = |x: f32| ((x - r.left()) / r.width()).clamp(0.0, 1.0) as f64 * dur;
-        let dragging = self.scrub.as_ref().is_some_and(|s| s.released.is_none());
+        let dragging = self.scrub.as_ref().is_some_and(|s| s.dragging());
         let active = resp.hovered() || dragging;
         let thick = 4.0 + 2.0 * ui.ctx().animate_bool_with_time(Id::unique("seek-thick"), active, 0.12);
         let track = Rect::from_center_size(r.center(), vec2(r.width(), thick));
         let p = ui.painter();
         p.rect_filled(track, thick / 2.0, Color32::from_white_alpha(46));
-        if let Some(c) = pb.cache_time.filter(|c| *c > 0.0) {
+        if let Some(c) = pb.cache_time.filter(|c| *c > 0.0 && self.scrub.is_none()) {
             let t0 = pb.time_pos.unwrap_or(0.0);
             if c > t0 {
                 let cr = Rect::from_min_max(pos2(x_of(t0), track.top()), pos2(x_of(c), track.bottom()));
@@ -195,85 +182,41 @@ impl FlickApp {
             p.rect_filled(tip, 6.0, Color32::from_rgba_unmultiplied(22, 22, 26, 236));
             p.galley(tip.center() - galley.size() / 2.0, galley, TEXT);
         }
-        self.scrub_input(ui, &resp, r, dur);
     }
 
-    /// Drive a seek-bar drag. Playback pauses for the drag and resumes after. While the
-    /// pointer moves, seeks go to keyframes (cheap, so the picture keeps up); once it
-    /// rests, an exact seek lands on the frame under it. Shift slows the drag 10x.
+    /// Drive a seek-bar drag (the seek choices are in `scrub.rs`). Playback pauses for
+    /// the drag and resumes after. Shift slows the drag 10x.
     fn scrub_input(&mut self, ui: &egui::Ui, resp: &egui::Response, r: Rect, dur: f64) {
         let now = self.last_time;
         let per_px = dur / r.width().max(1.0) as f64;
-        let t_of = |x: f32| ((x - r.left()) / r.width()).clamp(0.0, 1.0) as f64 * dur;
-        let pointer = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on());
-        if let Some(pos) = pointer {
-            let (fine, dx) = ui.input(|i| (i.modifiers.shift, i.pointer.delta().x));
+        // Stop short of the very end: a seek there hits EOF instead of showing a frame.
+        let end = (dur - 0.05).max(0.0);
+        let t_of = |x: f32| (((x - r.left()) / r.width()).clamp(0.0, 1.0) as f64 * dur).min(end);
+        let held = resp.is_pointer_button_down_on();
+        let pos = resp.interact_pointer_pos();
+        // A click quicker than a frame is never seen held: treat it as a grab and release.
+        let quick = resp.clicked() && self.scrub.as_ref().is_none_or(|s| !s.dragging());
+        if let (Some(pos), true) = (pos, held || quick) {
             let mut s = match self.scrub.take() {
-                Some(s) if s.released.is_none() => s,
-                // A new drag. If the last one is still settling, its resume carries over:
-                // mpv may not have reported the unpause yet.
-                prev => {
-                    let pb = &self.player.pb;
-                    let resume = prev.is_some_and(|p| p.resume) || (!pb.pause && !pb.eof);
-                    if resume {
-                        let _ = self.player.set("pause", "yes");
-                    }
-                    Scrub { t: f64::NAN, resume, sent: None, moved: now, exact: false, released: None }
-                }
+                Some(s) if s.dragging() => s,
+                settling => Scrub::grab(settling, &self.player, now),
             };
-            let t = if fine && !s.t.is_nan() { (s.t + dx as f64 * per_px / 10.0).clamp(0.0, dur) } else { t_of(pos.x) };
-            if t != s.t {
-                s.t = t;
-                s.moved = now;
-                s.exact = false;
-            }
-            if !s.exact {
-                // Don't stack seeks while mpv is still working on the last one.
-                let busy = self.player.pb.seeking && s.sent.is_some_and(|(_, at)| now - at < 0.25);
-                if !busy {
-                    if now - s.moved > 0.12 {
-                        let _ = self.player.cmd(&["seek", &format!("{:.3}", s.t), "absolute+exact"]);
-                        s.sent = Some((s.t, now));
-                        s.exact = true;
-                    } else if s.sent.is_none_or(|(st, _)| (st - s.t).abs() >= per_px) {
-                        let _ = self.player.cmd(&["seek", &format!("{:.3}", s.t), "absolute+keyframes"]);
-                        s.sent = Some((s.t, now));
-                    }
-                }
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(30));
+            let (fine, dx) = ui.input(|i| (i.modifiers.shift, i.pointer.delta().x));
+            let t = if fine && !s.t.is_nan() { (s.t + dx as f64 * per_px / 10.0).clamp(0.0, end) } else { t_of(pos.x) };
+            s.move_to(t, now);
+            if !held {
+                s.release(&self.player, &self.seek_model, now, per_px);
             }
             self.scrub = Some(s);
-            return;
+        } else if let Some(s) = &mut self.scrub {
+            s.release(&self.player, &self.seek_model, now, per_px);
         }
-        if resp.clicked() && self.scrub.as_ref().is_none_or(|s| s.released.is_some()) {
-            // A click too quick to be seen as held: just seek there.
-            if let Some(pos) = resp.interact_pointer_pos() {
-                let _ = self.player.cmd(&["seek", &format!("{:.3}", t_of(pos.x)), "absolute+exact"]);
-            }
-        }
-        let pb = &self.player.pb;
         let Some(s) = &mut self.scrub else { return };
-        match s.released {
-            None => {
-                if !(s.exact && s.sent.is_some_and(|(st, _)| st == s.t)) {
-                    let _ = self.player.cmd(&["seek", &format!("{:.3}", s.t), "absolute+exact"]);
-                }
-                if s.resume {
-                    let _ = self.player.set("pause", "no");
-                }
-                s.released = Some(now);
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(30));
-            }
-            // Keep the knob at the target until mpv's position gets there, so it doesn't
-            // flick back to the old spot for a frame.
-            Some(at) => {
-                let landed = !pb.seeking && pb.time_pos.is_some_and(|p| (p - s.t).abs() < 0.5) && now - at > 0.05;
-                if landed || now - at > 1.5 {
-                    self.scrub = None;
-                } else {
-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(30));
-                }
-            }
+        if s.step(&self.player, &mut self.seek_model, now, per_px) {
+            // Rests are noticed by time, not input, so keep frames coming while a drag lives.
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+        } else {
+            self.scrub = None;
         }
     }
 
@@ -290,7 +233,7 @@ impl FlickApp {
             ui.spacing_mut().item_spacing.x = 2.0;
             // Mid-scrub the pause is ours; show what playback will go back to.
             let playing = match &self.scrub {
-                Some(s) if s.released.is_none() => s.resume,
+                Some(s) if s.dragging() => s.resume,
                 _ => !pb.pause && !pb.eof,
             };
             if icon_button(ui, if playing { icon::PAUSE } else { icon::PLAY }, if playing { "Pause (Space)" } else { "Play (Space)" }, false, 18.0).clicked() {
