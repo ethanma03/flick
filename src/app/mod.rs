@@ -39,7 +39,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { volume: 100.0, mute: false, info: false, autonext: true, background: true }
+        Self { volume: 100.0, mute: false, info: false, autonext: false, background: true }
     }
 }
 
@@ -92,8 +92,7 @@ pub struct FlickApp {
     region: Option<Region>,
     selecting: bool,
     drag_from: Option<Pos2>,
-    /// Seek-bar drag in progress: the time under the pointer.
-    scrub: Option<f64>,
+    scrub: Option<controls::Scrub>,
     video_rect: Rect,
     /// Current mpv sub-pos (100 = bottom); raised while the controls show.
     sub_pos: i64,
@@ -104,8 +103,6 @@ pub struct FlickApp {
     toast: Option<(String, f64)>,
     last_activity: f64,
     last_time: f64,
-    /// A single click waiting to see whether it becomes a double click.
-    pending_click: Option<f64>,
     ontop: bool,
     snaps: Vec<SnapReq>,
     title: String,
@@ -311,7 +308,6 @@ impl FlickApp {
             toast: None,
             last_activity: 0.0,
             last_time: 0.0,
-            pending_click: None,
             ontop: false,
             snaps: Vec::new(),
             title: String::new(),
@@ -547,6 +543,7 @@ impl FlickApp {
         let ch = self.player.poll();
         if ch.file_loaded {
             self.loading = false;
+            self.scrub = None;
             self.error = None;
         }
         if let Some(e) = ch.command_errors.into_iter().last() {
@@ -563,14 +560,6 @@ impl FlickApp {
         self.was_eof = eof;
         self.poll_watcher(now);
 
-        if let Some(t) = self.pending_click {
-            if now - t > 0.28 {
-                self.pending_click = None;
-                let _ = self.exec(ctx, &["play".into()], None);
-            } else {
-                ctx.request_repaint_after(std::time::Duration::from_millis(40));
-            }
-        }
         if let Some((_, t)) = &self.toast {
             if now - t > 1.8 {
                 self.toast = None;
@@ -870,7 +859,6 @@ impl FlickApp {
     }
 
     fn handle_video_input(&mut self, ctx: &egui::Context, resp: &egui::Response, rect: Rect) {
-        let now = self.last_time;
         if self.selecting {
             if resp.drag_started_by(egui::PointerButton::Primary) {
                 // Where the button went down, not where egui decided it's a drag.
@@ -891,11 +879,15 @@ impl FlickApp {
             ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
             return;
         }
+        // A click toggles play right away instead of waiting out the double-click
+        // window; a double click undoes that toggle and goes fullscreen.
         if resp.double_clicked() {
-            self.pending_click = None;
+            if self.current.is_some() {
+                let _ = self.exec(ctx, &["play".into()], None);
+            }
             let _ = self.exec(ctx, &["fullscreen".into()], None);
         } else if resp.clicked() && self.current.is_some() {
-            self.pending_click = Some(now);
+            let _ = self.exec(ctx, &["play".into()], None);
         }
         if self.current.is_none() && resp.clicked() {
             self.open_dialog();

@@ -70,6 +70,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("← →", "Seek 5 s  (Shift: 1 s, Ctrl: 1 min)"),
     ("J", "Back 10 s"),
     ("Ctrl+Wheel", "Seek"),
+    ("Shift+drag seek bar", "Fine scrub (10× slower)"),
     ("0 … 9", "Jump to 0% … 90%"),
     (", .", "Previous / next frame"),
     ("↑ ↓ / Wheel", "Volume"),
