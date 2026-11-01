@@ -18,7 +18,10 @@ A simple, fast video player for Windows, Glint's sibling. It plays everything (i
   - When a file changes on disk, Flick reloads it at the same position, so a re-encode shows up on its own.
 - **Instant**: Flick runs in the tray after you close it, so double-clicking a video opens it right away. Closing the window stops playback.
 
-## Install
+## Download
+Get the latest build from **[openwith.dev](https://openwith.dev)** or the [Releases page](https://github.com/ethanma03/flick/releases/latest). Unzip `Flick-win-x64.zip` and double-click `Install.cmd`. It installs for your user account only, and one optional UAC prompt makes Flick your default app. Flick isn't code-signed yet, so SmartScreen may ask you to click **More info**, then **Run anyway**.
+
+## Build from source
 ```powershell
 pwsh scripts\install.ps1     # fetch libmpv, build, install to %LOCALAPPDATA%\Programs\Flick, register file types
 pwsh scripts\update.ps1      # later: pull, rebuild, reinstall, resume what was playing
@@ -37,3 +40,9 @@ Press **F1** in the player for the full list. The basics:
 - `N`/`P`: next or previous file.
 - `S`/`A`: subtitle or audio track.
 - `Ctrl+C`: copy the timestamp. `Ctrl+P`: command palette.
+
+## Releases
+Run `pwsh scripts\package.ps1` to build a release zip. It writes `dist\Flick-win-x64.zip`, which contains the binaries, the install scripts, `Install.cmd` and `Uninstall.cmd`.
+
+## License
+MIT. See [LICENSE](LICENSE). Release packages bundle `libmpv-2.dll` from [shinchiro/mpv-winbuild-cmake](https://github.com/shinchiro/mpv-winbuild-cmake), which is GPL-2.0-or-later as built. `THIRD-PARTY-NOTICES.txt` in the package has the details.

@@ -30,7 +30,7 @@ if (-not $isAdmin) {
     # Re-launch elevated; the UAC prompt is the one click this needs.
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
     if ($Remove) { $argList += '-Remove' }
-    $p = Start-Process pwsh -Verb RunAs -ArgumentList $argList -Wait -PassThru
+    $p = Start-Process (Get-Process -Id $PID).Path -Verb RunAs -ArgumentList $argList -Wait -PassThru
     exit $p.ExitCode
 }
 

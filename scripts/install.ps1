@@ -15,15 +15,19 @@ $dest = Join-Path $env:LOCALAPPDATA 'Programs\Flick'
 $gui = Join-Path $dest 'flickw.exe'
 $cli = Join-Path $dest 'flick.exe'
 
+# A release package keeps the binaries next to the scripts folder; a source checkout builds them into target\release.
+$packaged = Test-Path (Join-Path $repo 'flickw.exe')
+$bin = if ($packaged) { $repo } else { Join-Path $repo 'target\release' }
+
 # Keep in sync with media::VIDEO_EXTENSIONS / AUDIO_EXTENSIONS.
 $video = @('mp4','m4v','mkv','webm','mov','avi','wmv','flv','mpg','mpeg','m2ts','mts','ts','3gp','ogv',
            'vob','divx','asf','rm','rmvb','f4v','y4m','gifv')
 $audio = @('mp3','m4a','aac','flac','wav','ogg','oga','opus','wma','aiff','aif','ape','wv','mka','ac3','dts')
 
-if (-not (Test-Path (Join-Path $repo 'vendor\mpv\libmpv-2.dll'))) {
+if (-not $packaged -and -not (Test-Path (Join-Path $repo 'vendor\mpv\libmpv-2.dll'))) {
     & (Join-Path $PSScriptRoot 'fetch-mpv.ps1')
 }
-if (-not $NoBuild) {
+if (-not $NoBuild -and -not $packaged) {
     Write-Host 'Building release...' -ForegroundColor Cyan
     Push-Location $repo
     try { cargo build --release; if ($LASTEXITCODE) { throw 'cargo build failed' } } finally { Pop-Location }
@@ -36,14 +40,20 @@ while ((Get-Process flickw -ErrorAction SilentlyContinue) -and (Get-Date) -lt $d
 Get-Process flickw -ErrorAction SilentlyContinue | Stop-Process -Force
 
 New-Item -ItemType Directory -Force $dest | Out-Null
-Copy-Item (Join-Path $repo 'target\release\flick.exe') $cli -Force
-Copy-Item (Join-Path $repo 'target\release\flickw.exe') $gui -Force
-$dll = Join-Path $repo 'vendor\mpv\libmpv-2.dll'
+Copy-Item (Join-Path $bin 'flick.exe') $cli -Force
+Copy-Item (Join-Path $bin 'flickw.exe') $gui -Force
+$dll = if ($packaged) { Join-Path $repo 'libmpv-2.dll' } else { Join-Path $repo 'vendor\mpv\libmpv-2.dll' }
 $installedDll = Join-Path $dest 'libmpv-2.dll'
 if (-not (Test-Path $installedDll) -or (Get-Item $dll).LastWriteTime -ne (Get-Item $installedDll).LastWriteTime) {
     Copy-Item $dll $installedDll -Force
 }
 Write-Host "Installed to $dest" -ForegroundColor Green
+
+# Keep the uninstall scripts with the app, and clear the downloaded-file mark so Windows doesn't warn at every launch.
+$scriptsDest = Join-Path $dest 'scripts'
+New-Item -ItemType Directory -Force $scriptsDest | Out-Null
+Copy-Item (Join-Path $PSScriptRoot 'uninstall.ps1'), (Join-Path $PSScriptRoot 'set-default.ps1') $scriptsDest -Force
+Get-ChildItem $dest -Recurse -File | Unblock-File
 
 # PATH (user scope).
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')

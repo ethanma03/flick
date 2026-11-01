@@ -1,0 +1,15 @@
+Third-party software in this package
+====================================
+
+libmpv-2.dll
+  mpv is a free media player library. This build comes from the
+  shinchiro/mpv-winbuild-cmake project and includes FFmpeg and other
+  libraries. As built, it is licensed under the GNU General Public License,
+  version 2 or later (GPL-2.0-or-later).
+  mpv source code:    https://github.com/mpv-player/mpv
+  Build recipe:       https://github.com/shinchiro/mpv-winbuild-cmake
+  Exact build:        see VERSION-libmpv.txt in this folder.
+  The GPL text:       https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
+Flick itself is MIT-licensed (see LICENSE.txt). It loads libmpv-2.dll as a
+separate library at run time.
